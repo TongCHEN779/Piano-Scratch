@@ -21,6 +21,12 @@
     </div>
   </header>
 
+  <nav class="tabs">
+    <button class="tab on" data-tab="editor">转谱 / 编辑</button>
+    <button class="tab" data-tab="theory">乐理速查</button>
+  </nav>
+
+  <div id="tab-editor">
   <section class="card" id="import-card">
     <div id="drop" class="drop" tabindex="0">
       <input id="file-audio" type="file" accept="audio/*,video/*" hidden>
@@ -42,6 +48,37 @@
     </div>
     <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
     <div class="status" id="status"></div>
+  </section>
+
+  <section class="card" id="scan-card">
+    <div class="scan-head"><strong>扫描识谱</strong><span class="muted">上传五线谱图片，由 Claude 视觉模型识别后导入编辑器（需自备 API Key，仅在浏览器直接发送给 Anthropic）</span></div>
+    <div class="scan-body">
+      <div id="scan-drop" class="drop small" tabindex="0">
+        <input id="file-img" type="file" accept="image/*" hidden>
+        <span>拖入乐谱图片或 <button id="btn-pick-img" class="link">选择图片</button></span>
+        <img id="scan-preview" alt="" hidden>
+      </div>
+      <div class="scan-opts">
+        <div class="url-row"><input id="img-url" type="url" placeholder="或粘贴图片直链（需允许跨域）"><button id="btn-img-url">载入</button></div>
+        <div class="url-row">
+          <input id="api-key" type="password" placeholder="Anthropic API Key (sk-ant-…)" autocomplete="off">
+          <input id="api-model" type="text" value="claude-sonnet-5-5" title="模型 ID" style="max-width:190px">
+        </div>
+        <label class="muted"><input id="api-remember" type="checkbox"> 在本机浏览器记住密钥</label>
+        <div><button id="btn-scan" class="primary" disabled>识别乐谱</button> <span class="muted">建议每张图 4–8 小节、清晰无倾斜；结果请对照原图修改。</span></div>
+        <div class="status" id="scan-status"></div>
+      </div>
+    </div>
+    <details class="noapi" id="noapi">
+      <summary><b>没有 API Key？用 claude.ai 订阅识谱（免费）</b></summary>
+      <ol>
+        <li><button id="btn-copy-prompt">复制提示词</button></li>
+        <li>在 <a href="https://claude.ai" target="_blank" rel="noopener">claude.ai</a> 新开对话，上传乐谱图片，粘贴提示词并发送。</li>
+        <li>把 Claude 的整段回复粘贴到下面，点「导入」。</li>
+      </ol>
+      <textarea id="paste-json" rows="5" placeholder='粘贴 Claude 的回复（含 {"key_fifths": …} 的 JSON）'></textarea>
+      <div><button id="btn-paste-import" class="primary">导入识别结果</button> <span class="status inline" id="paste-status"></span></div>
+    </details>
   </section>
 
   <div class="toolbar" id="toolbar">
@@ -94,6 +131,9 @@
       1–5 时值，. 附点，R / L 切换左右手，Delete 删除，空格播放。切换到「添加音符」后点击五线谱即可落音，点小节号可设置播放起点。
       蓝色 = 右手，橙色 = 左手。所有处理都在浏览器本地完成，文件不会上传。</p>
   </footer>
+  </div>
+
+  <div id="tab-theory" hidden></div>
 
   <audio id="orig-audio" hidden></audio>
   <script type="module" src="js/main.js"></script>

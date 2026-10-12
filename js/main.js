@@ -7,6 +7,8 @@ import { GRID, KEY_NAMES, noteName, shiftDiatonic, midiFromStaffStep, ALLOWED_DU
 import { decodeAudio, runModel, extractNotes } from './transcribe.js';
 import { Player } from './audio.js';
 import { toMidi } from './midi.js';
+import { recognize, toScoreData, parseModelText, PROMPT } from './omr.js';
+import { initTheoryLab } from './theorylab.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'piano-scratch-v1';
@@ -573,6 +575,131 @@ $('btn-demo').onclick = () => {
   setStatus('这是示例曲目《欢乐颂》。试试拖动音符、切换时值或左右手。');
 };
 
+// ---------------------------------------------------------------- scan sheet music (OMR)
+const KEY_STORE = 'piano-scratch-apikey';
+let scanBlob = null;
+
+function pickImage(blob) {
+  if (!blob) return;
+  scanBlob = blob;
+  const img = $('scan-preview');
+  if (img.src) URL.revokeObjectURL(img.src);
+  img.src = URL.createObjectURL(blob);
+  img.hidden = false;
+  $('btn-scan').disabled = false;
+  $('scan-status').textContent = '';
+}
+const setScanStatus = (t, err = false) => { $('scan-status').textContent = t; $('scan-status').classList.toggle('err', err); };
+
+$('btn-pick-img').onclick = () => $('file-img').click();
+$('file-img').onchange = (e) => pickImage(e.target.files[0]);
+const sdrop = $('scan-drop');
+['dragenter', 'dragover'].forEach((t) => sdrop.addEventListener(t, (e) => { e.preventDefault(); sdrop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => sdrop.addEventListener(t, (e) => { e.preventDefault(); sdrop.classList.remove('over'); }));
+sdrop.addEventListener('drop', (e) => pickImage(e.dataTransfer.files[0]));
+document.addEventListener('paste', (e) => {
+  const f = [...(e.clipboardData?.files || [])].find((x) => x.type.startsWith('image/'));
+  if (f) { pickImage(f); setScanStatus('已粘贴图片。'); }
+});
+$('scan-preview').onclick = () => window.open($('scan-preview').src, '_blank');
+
+$('btn-img-url').onclick = async () => {
+  const url = $('img-url').value.trim();
+  if (!url) return;
+  setScanStatus('正在获取图片…');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) throw new Error('不是图片');
+    pickImage(blob);
+    setScanStatus('图片已载入。');
+  } catch {
+    setScanStatus('无法直接获取该图片（可能被跨域限制）。请保存图片后上传，或直接粘贴（⌘V）。', true);
+  }
+};
+
+function applyScan(data) {
+  if (!data.notes.length) throw new Error('没有识别到音符，请换一张更清晰的图片。');
+  const next = emptyScore();
+  next.key = data.key; next.beats = data.beats; if (data.bpm) next.bpm = data.bpm;
+  next.notes = data.notes.map((n) => clampNote({ id: newId(), ...n, locked: true }, next.beats));
+  history.push(state.score);
+  state.raw = null;
+  stopAll();
+  setScore(next);
+  $('score-wrap').scrollIntoView({ behavior: 'smooth' });
+  return `识别到 ${data.measures} 小节、${next.notes.length} 个音符（${KEY_NAMES[next.key]} 大调，${next.beats}/4）。识别可能有误，请对照原图在下方修改。`;
+}
+
+$('btn-copy-prompt').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(PROMPT);
+    $('paste-status').textContent = '提示词已复制。';
+  } catch {
+    $('paste-text-fallback')?.remove();
+    $('paste-json').value = PROMPT;
+    $('paste-status').textContent = '无法写入剪贴板，已把提示词放进下方文本框，请手动全选复制。';
+  }
+};
+$('btn-paste-import').onclick = () => {
+  try {
+    $('paste-status').classList.remove('err');
+    $('paste-status').textContent = applyScan(toScoreData(parseModelText($('paste-json').value)));
+  } catch (err) {
+    $('paste-status').classList.add('err');
+    $('paste-status').textContent = `导入失败：${err.message}`;
+  }
+};
+
+$('btn-scan').onclick = async () => {
+  const apiKey = $('api-key').value.trim();
+  if (!scanBlob) return;
+  if (!apiKey) { setScanStatus('请先填写 Anthropic API Key。', true); return; }
+  try {
+    if ($('api-remember').checked) localStorage.setItem(KEY_STORE, apiKey); else localStorage.removeItem(KEY_STORE);
+  } catch { /* ignore */ }
+  const btn = $('btn-scan');
+  btn.disabled = true;
+  setScanStatus('正在识别乐谱…（通常需要十几秒）');
+  try {
+    const msg = applyScan(toScoreData(await recognize(scanBlob, { apiKey, model: $('api-model').value.trim() || 'claude-sonnet-5-5' })));
+    setScanStatus(msg);
+  } catch (err) {
+    console.error(err);
+    setScanStatus(`识别失败：${err.message || err}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ---------------------------------------------------------------- tabs + theory lab
+document.querySelectorAll('.tab').forEach((b) => {
+  b.onclick = () => {
+    stopAll();
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === b));
+    $('tab-editor').hidden = b.dataset.tab !== 'editor';
+    $('tab-theory').hidden = b.dataset.tab !== 'theory';
+  };
+});
+
+function insertEvents(events, title) {
+  const s = state.score;
+  const end = s.notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
+  const base = Math.ceil(end / s.beats - 1e-9) * s.beats;
+  history.push(s);
+  const added = events.map((e) => clampNote({
+    id: newId(), midi: e.midi, start: base + e.start, dur: e.dur, hand: e.midi >= s.split ? 'R' : 'L', locked: false,
+  }, s.beats));
+  s.notes.push(...added);
+  state.selection = new Set(added.map((n) => n.id));
+  document.querySelector('.tab[data-tab="editor"]').click();
+  render();
+  setStatus(`已把「${title}」写入第 ${Math.floor(base / s.beats) + 1} 小节。`);
+  $('score-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+initTheoryLab($('tab-theory'), { onInsert: insertEvents });
+
 // ---------------------------------------------------------------- boot
 function boot() {
   try {
@@ -589,6 +716,10 @@ function boot() {
   let t;
   window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(render, 120); });
   $('sens-label').textContent = SENS_LABELS[3];
+  try {
+    const k = localStorage.getItem(KEY_STORE);
+    if (k) { $('api-key').value = k; $('api-remember').checked = true; }
+  } catch { /* ignore */ }
 }
 boot();
 
