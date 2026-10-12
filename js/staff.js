@@ -111,6 +111,7 @@ export class StaffView {
 
   // ---- rendering ------------------------------------------------------------
   render(score, ui) {
+    this.marks = ui.marks || null;
     const L = this.buildLayout(score, ui.width);
     const out = [];
     const noteSvg = [];
@@ -319,15 +320,17 @@ export class StaffView {
         const y = yOf(it.s.d);
         const nx = it.shift ? x + (up ? NOTEHEAD_W - 1.2 : -NOTEHEAD_W + 1.2) : x;
         const sel = selected.has(it.n.id);
+        const mark = this.marks && this.marks.get(it.n.id);
+        if (mark === 'expect') out.push(`<rect class="expbox" x="${nx - 4}" y="${y - 8}" width="${NOTEHEAD_W + 8}" height="16" rx="5"/>`);
         if (sel) out.push(`<rect class="selbox" x="${nx - 3}" y="${y - 7}" width="${NOTEHEAD_W + 6}" height="14" rx="4"/>`);
-        out.push(`<text class="glyph head" data-id="${it.n.id}" data-cx="${(nx + NOTEHEAD_W / 2).toFixed(1)}" data-cy="${y}" x="${nx}" y="${y}" font-size="${4 * SP}" fill="${sel ? '#111' : color}">${headGlyph}</text>`);
+        out.push(`<text class="glyph head" data-id="${it.n.id}" data-cx="${(nx + NOTEHEAD_W / 2).toFixed(1)}" data-cy="${y}" x="${nx}" y="${y}" font-size="${4 * SP}" style="fill:${mark === 'bad' ? '#e03131' : mark === 'ok' ? '#2f9e44' : sel ? '#111' : color}">${headGlyph}</text>`);
         out.push(`<rect class="hit" data-id="${it.n.id}" x="${nx - 3}" y="${y - 6}" width="${NOTEHEAD_W + 6}" height="12"/>`);
         if (it.acc) {
-          out.push(`<text class="glyph" x="${nx - 11 - it.accCol * 9}" y="${y}" font-size="${4 * SP}" fill="${color}">${it.acc}</text>`);
+          out.push(`<text class="glyph" x="${nx - 11 - it.accCol * 9}" y="${y}" font-size="${4 * SP}" style="fill:${color}">${it.acc}</text>`);
         }
         if (ev.dur === 0.75 || ev.dur === 1.5 || ev.dur === 3) {
           const dy = (it.s.d - baseD) % 2 === 0 ? -STEP : 0; // dots sit in spaces
-          out.push(`<text class="glyph" x="${nx + NOTEHEAD_W + 2}" y="${y + dy}" font-size="${4 * SP}" fill="${color}">${G.dot}</text>`);
+          out.push(`<text class="glyph" x="${nx + NOTEHEAD_W + 2}" y="${y + dy}" font-size="${4 * SP}" style="fill:${color}">${G.dot}</text>`);
         }
       }
     }
@@ -391,7 +394,7 @@ export class StaffView {
       const st = stemEnds.get(ev);
       const g = ev.dur <= 0.25 ? (up ? G.flag16Up : G.flag16Down) : (up ? G.flag8Up : G.flag8Down);
       // dotted eighths show as eighth + dot; flags anchor at the stem end
-      out.push(`<text class="glyph" x="${st.x - 0.6}" y="${st.y}" font-size="${4 * SP}" fill="${color}">${g}</text>`);
+      out.push(`<text class="glyph" x="${st.x - 0.6}" y="${st.y}" font-size="${4 * SP}" style="fill:${color}">${g}</text>`);
     }
 
     // rests

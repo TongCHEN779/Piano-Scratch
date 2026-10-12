@@ -122,6 +122,29 @@
     </div>
   </div>
 
+  <details class="card kbd-card" id="kbd-card" open>
+    <summary><b>🎹 电钢琴连接</b> <span class="chip dev" id="kbd-dev">未连接</span></summary>
+    <div class="muted" style="margin-top:6px">用 USB 线连接电钢琴与电脑（需 Chrome / Edge；Safari 不支持），点「连接键盘」并允许 MIDI 权限。</div>
+    <div class="kbd-row">
+      <button id="kbd-connect" class="primary">连接键盘</button>
+      <span class="pressed" id="kbd-pressed">按下：—</span>
+      <label class="muted"><input id="kbd-sound" type="checkbox"> 用页面发声</label>
+    </div>
+    <div class="kbd-row">
+      <b>跟弹练习</b>
+      <label>手 <select id="prac-hand"><option value="both">双手</option><option value="R">仅右手</option><option value="L">仅左手</option></select></label>
+      <button id="prac-start">开始跟弹</button>
+      <span class="muted">从绿色起点（点小节号设置）开始，等你按对再前进，弹错会标红。</span>
+    </div>
+    <div class="kbd-row">
+      <b>弹奏录谱</b>
+      <label>节拍器 <select id="rec-metro"><option value="1">开</option><option value="0">关</option></select></label>
+      <button id="rec-start" class="rec">● 录音（先预备 1 小节）</button>
+      <span class="muted">按当前速度 ♩ 录入，从起点小节开始写入乐谱；建议先把速度调慢。</span>
+    </div>
+    <div class="kb-msg" id="kbd-msg"></div>
+  </details>
+
   <main id="score-wrap" class="score-wrap">
     <svg id="score" xmlns="http://www.w3.org/2000/svg"></svg>
   </main>

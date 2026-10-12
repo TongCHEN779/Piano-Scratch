@@ -26,6 +26,19 @@ export function assignHands(notes, split) {
   for (const n of notes) if (!n.locked) n.hand = n.midi >= split ? 'R' : 'L';
 }
 
+/** Played notes are shorter than written: stretch each note towards the next onset in the same hand. */
+export function legatoFill(notes, maxGap = 0.5) {
+  for (const hand of ['R', 'L']) {
+    const hn = notes.filter((n) => n.hand === hand).sort((a, b) => a.start - b.start);
+    for (const n of hn) {
+      const next = hn.find((m) => m.start > n.start + 1e-9);
+      if (!next) continue;
+      const gap = next.start - (n.start + n.dur);
+      if (gap > 1e-9 && gap <= maxGap) n.dur = snapDur(next.start - n.start, n.dur + maxGap);
+    }
+  }
+}
+
 /** Remove exact duplicates (same pitch, same start) keeping the longest. */
 function dedupe(notes) {
   const map = new Map();

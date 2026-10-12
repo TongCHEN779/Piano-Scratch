@@ -162,3 +162,15 @@ button.hand.L { color: var(--left); }
 .noapi ol { margin: 8px 0; padding-left: 20px; }
 .noapi textarea { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 6px 0; resize: vertical; }
 .status.inline { display: inline; margin-left: 8px; }
+
+#score .expbox { fill: rgba(47, 158, 68, .22); stroke: #2f9e44; stroke-width: 1.5; }
+.kbd-card { margin-top: 12px; }
+.kbd-card summary { cursor: pointer; }
+.kbd-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; }
+.chip.dev { background: #ececea; color: var(--muted); }
+.chip.dev.on { background: #d3f9d8; color: #1b6b2a; }
+.pressed { font-weight: 600; min-width: 120px; }
+.kb-msg { margin-top: 8px; min-height: 22px; }
+.kb-msg.bad { color: #c0262d; }
+.kb-msg.good { color: #1b6b2a; }
+button.rec.on { background: #e03131; color: #fff; border-color: #e03131; }

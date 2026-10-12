@@ -9,6 +9,7 @@ import { Player } from './audio.js';
 import { toMidi } from './midi.js';
 import { recognize, toScoreData, parseModelText, PROMPT } from './omr.js';
 import { initTheoryLab } from './theorylab.js';
+import { initKeyboard } from './keyboard.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'piano-scratch-v1';
@@ -27,6 +28,7 @@ const state = {
   file: null,
   trimStart: 0,
   sens: 3,
+  marks: null,
 };
 
 const history = new History();
@@ -42,7 +44,7 @@ function render() {
   view.ppb = Number($('set-zoom').value);
   view.render(state.score, {
     width: width(), selection: state.selection, mode: state.mode,
-    playBeat: state.playBeat, startBeat: state.startBeat,
+    playBeat: state.playBeat, startBeat: state.startBeat, marks: state.marks,
   });
   $('score').classList.toggle('add', state.mode === 'add');
   syncToolbar();
@@ -700,6 +702,29 @@ function insertEvents(events, title) {
 }
 initTheoryLab($('tab-theory'), { onInsert: insertEvents });
 
+// ---------------------------------------------------------------- digital piano (Web MIDI)
+const kbd = initKeyboard({
+  preview: (midi) => player.preview(midi),
+  getScore: () => state.score,
+  getStartBeat: () => state.startBeat,
+  setMarks(marks, beat) {
+    state.marks = marks;
+    state.playBeat = beat;
+    render();
+    if (beat != null) {
+      const { sys } = view.locateBeat(beat);
+      if (sys.y < wrap.scrollTop || sys.y + 250 > wrap.scrollTop + wrap.clientHeight) wrap.scrollTo({ top: Math.max(0, sys.y - 20), behavior: 'smooth' });
+    }
+  },
+  addNotes(notes) {
+    history.push(state.score);
+    state.score.notes.push(...notes);
+    state.selection = new Set(notes.map((n) => n.id));
+    render();
+  },
+});
+
+
 // ---------------------------------------------------------------- boot
 function boot() {
   try {
@@ -723,4 +748,4 @@ function boot() {
 }
 boot();
 
-window.__ps = { state, view, history, render };
+window.__ps = { state, view, history, render, kbd };
