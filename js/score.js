@@ -212,16 +212,44 @@ export function fitOffset(raw, bpm) {
   return phase + Math.floor((first - phase) / spb + 0.15) * spb;
 }
 
-/** Tempo whose beat/half-beat grid best explains the onsets, with a prior towards 60-110 bpm. */
+/** Onset times with simultaneous notes (within 50 ms) collapsed into one. */
+function onsetTimes(raw) {
+  const ts = [...new Set(raw.map((n) => n.start))].sort((a, b) => a - b);
+  const out = [];
+  for (const t of ts) if (!out.length || t - out[out.length - 1] > 0.05) out.push(t);
+  return out;
+}
+
+/**
+ * Tempo from the dominant spacing between onsets. In piano music the commonest gap is usually an eighth note
+ * (arpeggios, accompaniment figures), occasionally a quarter; the reading that lands in a natural tempo range wins.
+ * (Adagio at 57: eighths 0.53 s -> 57. A hymn in quarters at 100: gaps 0.6 s -> 100, not 50.)
+ */
 export function estimateBpm(raw) {
-  if (raw.length < 4) return 100;
-  let best = { bpm: 90, score: -Infinity };
-  for (let bpm = 50; bpm <= 170; bpm += 1) {
-    const prior = Math.exp(-0.5 * (Math.log2(bpm / 80) / 0.6) ** 2);
-    const score = (bestPhase(raw, bpm).score / raw.length) * prior;
-    if (score > best.score) best = { bpm, score };
+  const ts = onsetTimes(raw);
+  if (ts.length < 8) return 90;
+  const BIN = 0.02, MIN = 0.16, MAX = 1.3;
+  const hist = new Array(Math.ceil((MAX - MIN) / BIN)).fill(0);
+  for (let i = 1; i < ts.length; i++) {
+    const g = ts[i] - ts[i - 1];
+    if (g >= MIN && g < MAX) hist[Math.floor((g - MIN) / BIN)]++;
   }
-  return best.bpm;
+  const sm = hist.map((_, i) => (hist[i - 2] || 0) * 0.5 + (hist[i - 1] || 0) + hist[i] + (hist[i + 1] || 0) + (hist[i + 2] || 0) * 0.5);
+  // several rhythmic values show up as peaks (sixteenths, eighths, quarters): take the slowest strong one,
+  // which in this kind of music is the eighth-note spacing
+  const top = Math.max(...sm);
+  let peak = sm.indexOf(top);
+  for (let i = 1; i < sm.length - 1; i++) {
+    if (sm[i] >= 0.6 * top && sm[i] >= sm[i - 1] && sm[i] >= sm[i + 1] && MIN + (i + 0.5) * BIN <= 0.8) peak = i;
+  }
+  const gap = MIN + (peak + 0.5) * BIN;
+  const asEighth = 30 / gap, asQuarter = 60 / gap;
+  const ok = (b) => b >= 52 && b <= 120;
+  let bpm;
+  if (ok(asEighth) && !ok(asQuarter)) bpm = asEighth;
+  else if (ok(asQuarter) && !ok(asEighth)) bpm = asQuarter;
+  else bpm = Math.abs(Math.log2(asEighth / 80)) < Math.abs(Math.log2(asQuarter / 80)) ? asEighth : asQuarter;
+  return Math.round(Math.max(40, Math.min(200, bpm)));
 }
 
 /**
@@ -284,56 +312,160 @@ export function makeBeatMap(beatTimes, firstNoteTime) {
 }
 
 /**
- * Bar lines from the bass line. In arpeggiated / bass-driven piano music every bar starts on the lowest note of a
- * pattern, so the bass notes that are lower than everything within about a beat either side mark the downbeats.
- * Bars are stretched between those anchors, which follows rubato and fermatas without drifting.
- * Returns null when the bass line is not regular enough, and the caller falls back to beat tracking.
+ * Bar lines from the bass line. In bass-driven piano music (arpeggios, broken chords) every bar starts on the lowest
+ * note of a pattern, so low notes mark the downbeats. Bass notes also occur mid-bar, so instead of taking all of them
+ * we pick the chain of candidates that is most regular: a dynamic program over candidate times for each bar length.
+ * Bars are then stretched between the anchors, which follows rubato and fermatas without drifting.
+ * Returns null when no regular chain exists; the caller falls back to beat tracking.
  */
-export function trackBars(raw, bpm, beats) {
+export function trackBars(raw, bpm, beats, onScan) {
   const spb = 60 / bpm;
-  const pool = raw.filter((n) => n.midi <= 55 && (n.onset ?? 1) >= 0.5).sort((a, b) => a.start - b.start);
-  if (pool.length < 6) return null;
-  let marks = pool.filter((n) => !pool.some((m) => m !== n && Math.abs(m.start - n.start) <= 1.2 * spb
-    && (m.midi < n.midi || (m.midi === n.midi && m.start < n.start)))).map((n) => ({ t: n.start, w: (n.onset ?? 1) + n.amp + (60 - n.midi) / 12 })); // root-position bass wins ties
-
-  // markers closer than 0.6 of a bar are duplicates: keep the stronger one
-  const nominal = beats * spb;
-  const merged = [];
-  for (const m of marks) {
-    const prev = merged[merged.length - 1];
-    if (prev && m.t - prev.t < 0.6 * nominal) { if (m.w > prev.w) merged[merged.length - 1] = m; } else merged.push(m);
+  // lowest note of every onset cluster that is also low for its surroundings (a left hand written in treble
+  // clef still sits below the melody around it)
+  const sorted = [...raw].sort((a, b) => a.start - b.start);
+  const clusters = [];
+  for (const n of sorted) {
+    const c = clusters[clusters.length - 1];
+    if (c && n.start - c.t <= 0.06) { if (n.midi < c.n.midi) c.n = n; } else clusters.push({ t: n.start, n });
   }
-  marks = merged.map((m) => m.t);
-  if (marks.length < 4) return null;
+  if (clusters.length < 6) return null;
+  const pitchesAround = (t, span) => sorted.filter((n) => Math.abs(n.start - t) <= span).map((n) => n.midi).sort((a, b) => a - b);
+  const cand = clusters.filter((c) => {
+    const n = c.n;
+    if ((n.onset ?? 1) < 0.3) return false;
+    if (clusters.some((o) => o !== c && Math.abs(o.t - c.t) <= 1.2 * spb && (o.n.midi < n.midi || (o.n.midi === n.midi && o.t < c.t)))) return false;
+    const around = pitchesAround(c.t, 4 * spb);
+    return n.midi <= around[Math.floor(around.length * 0.4)];
+  }).map((c) => ({ t: c.n.start, w: 1 + (c.n.onset ?? 1) + c.n.amp + Math.max(0, (60 - c.n.midi) / 12) + Math.min(c.n.dur, 3) * 0.2 }));
+  if (cand.length < 4) return null;
 
-  const gaps = marks.slice(1).map((t, i) => t - marks[i]);
-  const L = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
-  const regular = gaps.filter((g) => Math.abs(g / L - 1) < 0.25).length / gaps.length;
-  if (regular < 0.55) return null;
+  // a marker only helps if it is stronger than a typical candidate; otherwise a chain of every mid-bar bass note
+  // (half-bar spacing) would always beat the real bar chain
+  const meanW = cand.reduce((a, c) => a + c.w, 0) / cand.length;
+  // best chain of candidates for a given spacing: each step is 1..kMax spacings with a penalty for deviating
+  const chainFor = (L, cost, kMax) => {
+    const best = new Array(cand.length), prev = new Array(cand.length).fill(-1);
+    let top = 0;
+    for (let i = 0; i < cand.length; i++) {
+      best[i] = cand[i].w - cost;
+      for (let j = i - 1; j >= 0; j--) {
+        const g = cand[i].t - cand[j].t;
+        if (g > (kMax + 0.4) * L) break;
+        const k = Math.round(g / L);
+        if (k < 1 || k > kMax) continue;
+        const dev = g / (k * L) - 1;
+        if (Math.abs(dev) > 0.28) continue;
+        const v = best[j] + cand[i].w - cost - 9 * dev * dev - (k - 1) * 0.6;
+        if (v > best[i]) { best[i] = v; prev[i] = j; }
+      }
+      if (best[i] > best[top]) top = i;
+    }
+    const idx = [];
+    for (let i = top; i >= 0; i = prev[i]) { idx.push(i); if (prev[i] < 0) break; }
+    return { score: best[top], idx: idx.reverse() };
+  };
 
-  // a gap of k bars gets k-1 evenly spaced extra anchors
-  const anchors = [marks[0]];
-  gaps.forEach((g, i) => {
-    const k = Math.max(1, Math.round(g / L));
-    for (let j = 1; j < k; j++) anchors.push(marks[i] + (g * j) / k);
-    anchors.push(marks[i + 1]);
-  });
-  const n = anchors.length;
+  // 1. bar length: the spacing whose chain of strong bass notes is best
+  const L0 = beats * spb;
+  let bar = null;
+  for (let L = 0.75 * L0; L <= 1.7 * L0; L += 0.02 * L0) {
+    const c = chainFor(L, 0.9 * meanW, 3);
+    if (onScan) onScan(L, c.score, c.idx.length);
+    if (!bar || c.score > bar.score) bar = { ...c, L };
+  }
+  if (!bar || bar.idx.length < 4) return null;
+  const barGaps = bar.idx.slice(1).map((i, n) => cand[i].t - cand[bar.idx[n]].t);
+  const Lbar = [...barGaps].sort((a, b) => a - b)[Math.floor(barGaps.length / 2)];
+
+  // 2. half-bar anchors: bass notes land on beat 1 and often on beat 3 too, and which is which cannot be told locally.
+  //    Anchor the time warp every half bar (robust), and label each anchor bar line (B) or mid-bar (M).
+  const Lh = Lbar / 2;
+  const chain = chainFor(Lh, 0, 5).idx;
+  if (chain.length < 4) return null;
+  const regular = barGaps.filter((g) => Math.abs(g / Lbar - 1) < 0.3).length / barGaps.length;
+  if (regular < 0.5) return null;
+
+  // Viterbi over the real markers: between two markers choose how many half bars fit (a stretched half bar after a
+  // ritardando or fermata must not shift the count), labels alternate with every half bar, strong bass prefers B.
+  const M = chain.length;
+  const w = chain.map((i) => cand[i].w), tm = chain.map((i) => cand[i].t);
+  const INF = 1e9;
+  const dp = Array.from({ length: M }, () => [INF, INF]);
+  const back = Array.from({ length: M }, () => [null, null]); // [prevLabel, k]
+  dp[0] = [-0.3 * w[0] - 25, 0.1 * w[0]]; // the first bass note of a piece is almost always a downbeat
+  for (let i = 1; i < M; i++) {
+    const r = (tm[i] - tm[i - 1]) / Lh;
+    const ks = [...new Set([Math.max(1, Math.floor(r)), Math.max(1, Math.ceil(r))])];
+    for (let a = 0; a < 2; a++) {
+      if (dp[i - 1][a] >= INF) continue;
+      for (const k of ks) {
+        const b = k % 2 === 1 ? 1 - a : a;
+        // a half bar can stretch (rubato, ritardando, fermata) far more easily than it can shrink
+        const c = dp[i - 1][a] + (r > k ? 0.4 : 3) * (r - k) ** 2 + (b === 0 ? -0.3 * w[i] : 0.1 * w[i]);
+        if (c < dp[i][b]) { dp[i][b] = c; back[i][b] = [a, k]; }
+      }
+    }
+  }
+  let lab = dp[M - 1][0] <= dp[M - 1][1] ? 0 : 1;
+  const labs = new Array(M), ksel = new Array(M);
+  for (let i = M - 1; i >= 0; i--) {
+    labs[i] = lab;
+    if (i > 0) { ksel[i] = back[i][lab][1]; lab = back[i][lab][0]; }
+  }
+  const anchors = [tm[0]], real = [w[0]], label = [labs[0]];
+  for (let i = 1; i < M; i++) {
+    const k = ksel[i];
+    for (let j = 1; j < k; j++) {
+      anchors.push(tm[i - 1] + ((tm[i] - tm[i - 1]) * j) / k);
+      real.push(0);
+      label.push((labs[i - 1] + j) % 2);
+    }
+    anchors.push(tm[i]); real.push(w[i]); label.push(labs[i]);
+  }
+  const N = anchors.length;
+  const gapSteps = anchors.map((t, i) => (i ? (t - anchors[i - 1]) / Lh : 0));
+
+  const barIdx = label.map((l, i) => (l === 0 ? i : -1)).filter((i) => i >= 0);
+  if (barIdx.length < 4) return null;
+  const barLens = barIdx.slice(1).map((i, j) => anchors[i] - anchors[barIdx[j]]);
+  const Lb = [...barLens].sort((a, b) => a - b)[Math.floor(barLens.length / 2)];
+
+  // positions in beats: bar lines are whole bars apart, mid-bar anchors sit half way when they are alone in their bar
+  const apos = new Array(N).fill(null);
+  apos[barIdx[0]] = 0;
+  for (let j = 1; j < barIdx.length; j++) {
+    const bars = Math.max(1, Math.round(barLens[j - 1] / Lb));
+    apos[barIdx[j]] = apos[barIdx[j - 1]] + bars * beats;
+  }
+  for (let j = 0; j + 1 < barIdx.length; j++) {
+    const i0 = barIdx[j], i1 = barIdx[j + 1];
+    const inner = [];
+    for (let i = i0 + 1; i < i1; i++) inner.push(i);
+    const span = apos[i1] - apos[i0];
+    inner.forEach((i) => {
+      apos[i] = inner.length === 1 && span === beats ? apos[i0] + beats / 2
+        : apos[i0] + (span * (anchors[i] - anchors[i0])) / (anchors[i1] - anchors[i0]);
+    });
+  }
+  // anchors before the first / after the last bar line: continue at the half-bar pace
+  for (let i = barIdx[0] - 1; i >= 0; i--) apos[i] = apos[i + 1] - (beats / 2) * Math.max(1, Math.round(gapSteps[i + 1]));
+  for (let i = barIdx[barIdx.length - 1] + 1; i < N; i++) apos[i] = apos[i - 1] + (beats / 2) * Math.max(1, Math.round(gapSteps[i]));
+
   const pos = (t) => {
     let i;
     if (t <= anchors[0]) i = 0;
-    else if (t >= anchors[n - 1]) i = n - 2;
+    else if (t >= anchors[N - 1]) i = N - 2;
     else {
-      let lo = 0, hi = n - 1;
+      let lo = 0, hi = N - 1;
       while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (anchors[mid] <= t) lo = mid; else hi = mid; }
       i = lo;
     }
-    return beats * (i + (t - anchors[i]) / (anchors[i + 1] - anchors[i]));
+    return apos[i] + ((apos[i + 1] - apos[i]) * (t - anchors[i])) / (anchors[i + 1] - anchors[i]);
   };
   // push everything (including a pickup before the first bass note) into positive time, by whole bars
   const first = Math.min(...raw.map((r) => r.start));
   const lead = Math.max(0, Math.ceil((-0.2 - pos(first)) / beats));
-  return { map: (t) => pos(t) + lead * beats, bpm: Math.round((60 * beats) / L), bars: anchors.length, regular };
+  return { map: (t) => pos(t) + lead * beats, bpm: Math.round((60 * beats) / Lb), bars: barIdx.length, regular, marks: anchors, labels: label };
 }
 
 /** If (almost) every onset sits on the eighth-note grid, the music has no sixteenths: use a coarser grid. */
