@@ -1,5 +1,8 @@
 // Music-theory lab: chords, inversions, arpeggios, scales, modes, fingerings on an interactive keyboard.
 import { Player } from './audio.js';
+import { ScoreEditor } from './editor.js';
+import { emptyScore, newId } from './score.js';
+import { spellOf } from './theory.js';
 
 const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const NAT = [0, 2, 4, 5, 7, 9, 11];
@@ -72,6 +75,17 @@ const SCALE_FINGER = {
   minor: { default: { R: [1, 2, 3, 1, 2, 3, 4, 5], L: [5, 4, 3, 2, 1, 3, 2, 1] } },
 };
 
+const MAJOR_F = { C: 0, G: 1, D: 2, A: 3, E: 4, B: 5, F: -1 };
+function fifthsOfMajor(L, alt) {
+  const f = MAJOR_F[LETTERS[L]] + 7 * alt;
+  return Math.abs(f) <= 7 ? f : 0;
+}
+/** Key signature (fifths) of the major key whose tonic is `semis` above the root, spelled `deg` letters above it. */
+function majorKeyAbove(root, deg, semis) {
+  const t = spellNote(root, deg, semis);
+  return fifthsOfMajor(t.L, t.alt);
+}
+
 function spellNote(root, deg, semis) {
   const [, rl, ra] = root;
   const rootPc = (NAT[rl] + ra + 120) % 12;
@@ -99,6 +113,19 @@ export function initTheoryLab(host, { onInsert }) {
       <button id="lab-insert">写入乐谱</button>
     </div>
     <div class="card" id="lab-info"></div>
+    <div class="card" id="lab-staff-card">
+      <div class="lab-tools">
+        <div class="group"><button id="lt-select" class="tool on">选择</button><button id="lt-add" class="tool">添加音符</button></div>
+        <div class="group" id="lt-durs">
+          <button class="dur" data-dur="4">&#xE1D2;</button><button class="dur" data-dur="2">&#xE1D3;</button><button class="dur" data-dur="1">&#xE1D5;</button>
+          <button class="dur" data-dur="0.5">&#xE1D7;</button><button class="dur" data-dur="0.25">&#xE1D9;</button><button id="lt-dot" class="dot">&#xE1E7;</button>
+        </div>
+        <div class="group"><button id="lt-sharp">♯</button><button id="lt-flat">♭</button><button id="lt-del">删除</button></div>
+        <div class="group"><button id="lt-undo">↶</button><button id="lt-redo">↷</button><button id="lt-reset">重置</button></div>
+      </div>
+      <div class="score-wrap lab-wrap" id="lab-wrap"><svg id="lab-score" class="staff-svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+      <div id="lab-ident" class="muted">点击音符选中，拖动改音高/位置，试试把和弦里的某个音改一改，下方会实时识别。</div>
+    </div>
     <div class="card"><div class="kb-wrap"><svg id="lab-kb"></svg></div></div>
     <div class="card" id="lab-finger"></div>
     <div class="card lab-notes">
@@ -120,7 +147,7 @@ export function initTheoryLab(host, { onInsert }) {
     const root = ROOTS[st.root];
     const rootPc = (NAT[root[1]] + root[2] + 12) % 12;
     const base = 60 + rootPc; // octave 4
-    let items, title, notes, seq, info = '', finger = null, kind = st.cat;
+    let items, title, notes, seq, info = '', finger = null, key = 0;
     const keys = Object.keys;
 
     if (st.cat === 'chord' || st.cat === 'inv' || st.cat === 'arp') {
@@ -164,6 +191,8 @@ export function initTheoryLab(host, { onInsert }) {
       title = `${root[0]} ${name}`;
       info = sc.note + `<br>音程（半音数）：${sc.iv.map(([, s], i) => (i ? s - sc.iv[i - 1][1] : 0)).slice(1).join(' · ')}；共 ${sc.iv.length} 个音`;
       const rn = root[0].replace('♯', '').replace('♭', '');
+      if (/大调|大调五声/.test(name)) key = majorKeyAbove(root, 1, 0);
+      else if (/小调|布鲁斯/.test(name)) key = majorKeyAbove(root, 3, 3);
       if (name.startsWith('大调音阶')) {
         const white = root[2] === 0 && ['C', 'G', 'D', 'A', 'E', 'B', 'F'].includes(rn);
         finger = white ? (SCALE_FINGER.major[rn] || SCALE_FINGER.major.default) : null;
@@ -176,13 +205,14 @@ export function initTheoryLab(host, { onInsert }) {
       const parentL = (root[1] - (m.k - 1) + 70) % 7;
       const parentPc = ((rootPc - [0, 2, 4, 5, 7, 9, 11][m.k - 1]) + 120) % 12;
       let pa = parentPc - NAT[parentL]; if (pa > 6) pa -= 12; if (pa < -6) pa += 12;
+      key = fifthsOfMajor(parentL, pa);
       items = m.iv.map((s, i) => ({ ...spellNote(root, i + 1, s), midi: base + s }));
       notes = [...items, { ...items[0], midi: base + 12 }];
       seq = notes.map((i) => i.midi);
       title = `${root[0]} ${m.name}`;
       info = `${m.note}<br>等同于 <b>${LETTERS[parentL]}${ACC[pa] ?? ''} 大调</b>音阶从第 ${m.k} 个音开始弹。公式（相对大调）：${m.iv.map((s, i) => { const maj = [0, 2, 4, 5, 7, 9, 11][i]; return (s === maj ? '' : s < maj ? '♭' : '♯') + (i + 1); }).join(' ')}`;
     }
-    return { title, info, notes, seq, finger, rootPc };
+    return { title, info, notes, seq, finger, rootPc, key, items };
   }
 
   function refreshControls() {
@@ -247,12 +277,90 @@ export function initTheoryLab(host, { onInsert }) {
     return `<h3>常用指法 <span class="muted">（1 拇指 … 5 小指，上行）</span></h3><table class="fing">${rows}</table>${cur.finger.arp ? '<p class="muted">一个八度的分解和弦；多个八度时拇指穿过后重复 1 2 3 的模式。</p>' : ''}`;
   }
 
+  // ---- interactive staff ---------------------------------------------------
+  const editor = new ScoreEditor({
+    svg: $('lab-score'),
+    wrap: $('lab-wrap'),
+    onPreview: (m) => player.preview(m),
+    onChange: (kind) => { if (kind === 'edit') refreshFromEditor(); syncTools(); },
+  });
+  let curTitle = '';
+
+  function labScore(cur) {
+    const blocky = st.cat === 'chord' || st.cat === 'inv';
+    const s = emptyScore();
+    s.bpm = 100; s.minMeasures = 1; s.key = cur.key;
+    s.notes = cur.seq.map((midi, i) => {
+      const it = cur.items.find((x) => x.pc === ((midi % 12) + 12) % 12);
+      return {
+        id: newId(), midi, start: blocky ? 0 : i * 0.5, dur: blocky ? 4 : 0.5,
+        hand: midi >= 60 ? 'R' : 'L', locked: true, ...(it ? { sp: { L: it.L, alt: it.alt } } : {}),
+      };
+    });
+    return s;
+  }
+
+  const noteLabel = (n) => { const sp = spellOf(n, editor.score.key); return LETTERS[sp.L] + (ACC[sp.alt] ?? ''); };
+
+  function identify(notes) {
+    const midis = notes.map((n) => n.midi);
+    const pcs = [...new Set(midis.map((m) => ((m % 12) + 12) % 12))];
+    if (pcs.length < 3) return null;
+    const bass = notes.reduce((a, b) => (b.midi < a.midi ? b : a));
+    const bassPc = ((bass.midi % 12) + 12) % 12;
+    const cands = [];
+    for (const r of pcs) {
+      const set = new Set(pcs.map((p) => (p - r + 12) % 12));
+      for (const [name, ch] of Object.entries(CHORDS)) {
+        const t = new Set(ch.iv.map(([, x]) => x % 12));
+        if (t.size === set.size && [...t].every((x) => set.has(x))) cands.push({ r, name, ch });
+      }
+    }
+    if (!cands.length) return null;
+    cands.sort((a, b) => (b.r === bassPc) - (a.r === bassPc));
+    const nameOfPc = (pc) => { const n = notes.find((x) => ((x.midi % 12) + 12) % 12 === pc); return noteLabel(n); };
+    return cands.slice(0, 2).map((c) => {
+      const tones = c.ch.iv.map(([, x]) => (c.r + x) % 12);
+      const invIdx = tones.indexOf(bassPc);
+      const inv = invIdx <= 0 ? '原位' : `第${['', '一', '二', '三'][invIdx]}转位`;
+      return `<b>${nameOfPc(c.r)}${c.ch.sym}</b>（${c.name.split(' ')[0]}，${inv}${invIdx > 0 ? `，低音 ${nameOfPc(bassPc)}` : ''}）`;
+    }).join(' 或 ');
+  }
+
+  function refreshFromEditor() {
+    const notes = editor.score.notes;
+    const seen = new Set();
+    const hl = notes.filter((n) => !seen.has(n.midi) && seen.add(n.midi)).map((n) => ({ midi: n.midi, name: noteLabel(n) }));
+    const lowest = notes.length ? Math.min(...notes.map((n) => n.midi)) : 60;
+    drawKeyboard(hl, lowest);
+    const asChord = ['chord', 'inv', 'arp'].includes(st.cat) || editor.history.undoStack.length;
+    const id = asChord ? identify(notes) : null;
+    $('lab-ident').innerHTML = id ? `识别：${id}` : (asChord && notes.length ? '识别：不是常见的三和弦 / 七和弦' : '点击音符选中，拖动改音高/位置，试试把和弦里的某个音改一改，下方会实时识别。');
+  }
+
+  function syncTools() {
+    $('lt-select').classList.toggle('on', editor.mode === 'select');
+    $('lt-add').classList.toggle('on', editor.mode === 'add');
+    const sel = editor.selected();
+    let base = editor.baseDur, dotted = editor.dotted;
+    if (sel.length && new Set(sel.map((n) => n.dur)).size === 1) {
+      const d = sel[0].dur;
+      dotted = [0.75, 1.5, 3].includes(d);
+      base = dotted ? d / 1.5 : d;
+    }
+    host.querySelectorAll('#lt-durs .dur').forEach((b) => b.classList.toggle('sel', Number(b.dataset.dur) === base));
+    $('lt-dot').classList.toggle('sel', dotted);
+  }
+
   function update() {
     const cur = current();
     $('lab-info').innerHTML = `<h3>${cur.title}</h3><p class="lab-names">${cur.notes.map((n) => `<span class="chip">${n.name}</span>`).join('')}</p><p>${cur.info}</p>`;
-    drawKeyboard(cur.notes, 60 + cur.rootPc);
     $('lab-finger').innerHTML = fingerHtml(cur);
     update.cur = cur;
+    curTitle = cur.title;
+    editor.setScore(labScore(cur));
+    refreshFromEditor();
+    syncTools();
   }
 
   $('lab-root').onchange = (e) => { st.root = Number(e.target.value); update(); };
@@ -260,27 +368,50 @@ export function initTheoryLab(host, { onInsert }) {
   $('lab-type').onchange = (e) => { st.type = Number(e.target.value); st.extra = 0; refreshControls(); update(); };
   $('lab-extra').onchange = (e) => { st.extra = Number(e.target.value); update(); };
 
-  const sequenceNotes = (cur) => {
-    const block = cur.kind === 'chord';
-    void block;
-    return cur;
-  };
-  void sequenceNotes;
+  $('lt-select').onclick = () => { editor.mode = 'select'; editor.render(); syncTools(); };
+  $('lt-add').onclick = () => { editor.mode = 'add'; editor.render(); syncTools(); };
+  host.querySelectorAll('#lt-durs .dur').forEach((b) => {
+    b.onclick = () => { const v = Number(b.dataset.dur); editor.setDuration(v, editor.dotted && v < 4 && v > 0.25); syncTools(); };
+  });
+  $('lt-dot').onclick = () => { editor.setDuration(editor.baseDur, !editor.dotted); syncTools(); };
+  $('lt-sharp').onclick = () => editor.nudge(1);
+  $('lt-flat').onclick = () => editor.nudge(-1);
+  $('lt-del').onclick = () => editor.remove();
+  $('lt-undo').onclick = () => editor.undo();
+  $('lt-redo').onclick = () => editor.redo();
+  $('lt-reset').onclick = () => update();
 
-  function toNotes(cur) {
-    const blocky = st.cat === 'chord' || st.cat === 'inv';
-    if (blocky) return cur.seq.map((midi) => ({ midi, start: 0, dur: 2 }));
-    return cur.seq.map((midi, i) => ({ midi, start: i * 0.5, dur: 0.5 }));
-  }
+  const events = () => {
+    const notes = editor.score.notes;
+    if (!notes.length) return [];
+    const t0 = Math.min(...notes.map((n) => n.start));
+    return notes.map((n) => ({ midi: n.midi, start: n.start - t0, dur: n.dur, ...(n.sp ? { sp: n.sp } : {}) }));
+  };
 
   $('lab-play').onclick = () => {
-    const cur = update.cur;
-    player.play(toNotes(cur).map((n) => ({ ...n, id: 0 })), 110, 0);
+    if (player.playing) { player.stop(); return; }
+    player.play(editor.score.notes.map((n) => ({ midi: n.midi, start: n.start, dur: n.dur })), editor.score.bpm, 0);
   };
   $('lab-insert').onclick = () => {
-    const cur = update.cur;
-    onInsert(toNotes(cur), cur.title);
+    const ev = events();
+    if (ev.length) onInsert(ev, curTitle);
   };
+
+  window.addEventListener('keydown', (e) => {
+    if (host.hidden) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    if (e.key === ' ') { e.preventDefault(); $('lab-play').click(); return; }
+    if (editor.key(e)) { e.preventDefault(); return; }
+    if (e.metaKey || e.ctrlKey) return;
+    if (e.key === 'n' || e.key === 'N') $('lt-add').click();
+    else if (e.key === 'v' || e.key === 'V') $('lt-select').click();
+    else if (e.key === '.') $('lt-dot').click();
+    else if ('12345'.includes(e.key) && e.key.length === 1) editor.setDuration([0.25, 0.5, 1, 2, 4][Number(e.key) - 1], false), syncTools();
+  });
+
+  // the staff can only measure itself once its tab is visible
+  new MutationObserver(() => { if (!host.hidden) editor.render(); }).observe(host, { attributes: true, attributeFilter: ['hidden'] });
 
   refreshControls();
   update();

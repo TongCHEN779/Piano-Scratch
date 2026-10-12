@@ -5,7 +5,7 @@
 - 转谱：[Spotify Basic Pitch](https://github.com/spotify/basic-pitch)（TensorFlow.js，首次使用从 CDN 加载模型）
 - 谱面：自写 SVG 大谱表渲染器，字体 Bravura（SIL OFL，见 `assets/fonts/`）
 - 扫描识谱：上传/粘贴五线谱图片，调用 Claude 视觉模型（自备 API Key，浏览器直连 Anthropic）识别后导入编辑器
-- 乐理速查：和弦、转位、分解和弦、音阶、调式、常用指法，可试听并一键写入乐谱
+- 乐理速查：和弦、转位、分解和弦、音阶、调式、常用指法，带可交互五线谱（可改音、实时识别和弦），可试听并一键写入乐谱
 - 电钢琴（Web MIDI，Chrome/Edge）：跟弹练习（等你按对再前进、弹错标红）、跟节拍器弹奏录谱
 - 编辑：拖动改音高/位置、改时值、切换左右手、增删音符、撤销重做、播放、导出 JSON / MIDI / 打印
 

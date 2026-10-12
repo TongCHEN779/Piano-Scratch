@@ -117,6 +117,7 @@
       <label>调号 <select id="set-key"></select></label>
       <label>分手 ≥ <input id="set-split" type="number" min="30" max="90" value="60"><span id="split-name" class="muted">C4</span></label>
       <button id="btn-resplit" title="按分界音高重新分配所有音符（会覆盖手动指定）">重新分手</button>
+      <label title="让量化跟随演奏中的速度快慢变化，适合有 rubato 的曲子"><input id="set-track" type="checkbox" checked> 节拍跟踪</label>
       <button id="btn-requant" title="用当前速度重新对齐节奏（会覆盖编辑）">按速度重新量化</button>
       <label>缩放 <input id="set-zoom" type="range" min="40" max="130" value="64"></label>
     </div>
@@ -146,7 +147,7 @@
   </details>
 
   <main id="score-wrap" class="score-wrap">
-    <svg id="score" xmlns="http://www.w3.org/2000/svg"></svg>
+    <svg id="score" class="staff-svg" xmlns="http://www.w3.org/2000/svg"></svg>
   </main>
 
   <footer class="help">

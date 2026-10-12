@@ -24,6 +24,13 @@ export function spell(midi, fifths) {
   return { L, alt, oct, d: oct * 7 + L };
 }
 
+/** Spelling of a note object: honours an explicit n.sp = {L, alt} (used by the theory lab), else derives it from the key. */
+export function spellOf(n, fifths) {
+  if (!n.sp) return spell(n.midi, fifths);
+  const oct = Math.round((n.midi - NATURAL[n.sp.L] - n.sp.alt) / 12) - 1;
+  return { L: n.sp.L, alt: n.sp.alt, oct, d: oct * 7 + n.sp.L };
+}
+
 /** Alteration (-1, 0, +1) the key signature applies to a letter. */
 export function keyAlt(L, fifths) {
   if (fifths > 0) return SHARP_ORDER.indexOf(L) < fifths ? 1 : 0;

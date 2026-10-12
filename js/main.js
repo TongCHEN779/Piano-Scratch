@@ -1,6 +1,6 @@
 import { StaffView } from './staff.js';
 import {
-  emptyScore, quantize, assignHands, clampNote, estimateBpm, estimateKeyFromRaw,
+  emptyScore, quantize, assignHands, clampNote, estimateBpm, estimateKeyFromRaw, fitOffset, trackBeats, trackBars, chooseGrid, makeBeatMap, estimateDownbeat, notationDurations, assignHandsSmart,
   serialize, deserialize, cloneScore, History, newId,
 } from './score.js';
 import { GRID, KEY_NAMES, noteName, shiftDiatonic, midiFromStaffStep, ALLOWED_DURS } from './theory.js';
@@ -136,7 +136,7 @@ function currentDur() {
 
 function nudgePitch(delta) {
   if (!state.selection.size) return;
-  commit((s) => s.notes.forEach((n) => { if (state.selection.has(n.id)) n.midi += delta; }));
+  commit((s) => s.notes.forEach((n) => { if (state.selection.has(n.id)) { n.midi += delta; delete n.sp; } }));
   const first = selectedNotes()[0];
   if (first) player.preview(first.midi);
 }
@@ -233,6 +233,7 @@ window.addEventListener('pointermove', (e) => {
       const o = drag.orig.get(n.id);
       if (!o) continue;
       n.midi = shiftDiatonic(o.midi, dStep, s.key);
+      if (dStep !== 0) delete n.sp;
       n.start = o.start + dBeat;
       clampNote(n, s.beats);
     }
@@ -293,6 +294,7 @@ $('score').addEventListener('dblclick', (e) => {
 window.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+  if ($('tab-editor').hidden) return;
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key;
   if (mod && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -354,7 +356,7 @@ $('btn-resplit').onclick = () => {
   const s = state.score;
   const locked = s.notes.filter((n) => n.locked).length;
   if (locked && !confirm(`有 ${locked} 个音符被手动指定过左右手，重新分手会覆盖它们。继续吗？`)) return;
-  commit((sc) => { sc.notes.forEach((n) => { n.locked = false; }); assignHands(sc.notes, sc.split); });
+  commit((sc) => { sc.notes.forEach((n) => { n.locked = false; }); assignHandsSmart(sc.notes, sc.split); });
 };
 $('set-zoom').oninput = () => render();
 $('btn-requant').onclick = () => {
@@ -362,7 +364,7 @@ $('btn-requant').onclick = () => {
   if (history.undoStack.length && !confirm('按当前速度重新量化会覆盖你对音符的编辑（可撤销）。继续吗？')) return;
   history.push(state.score);
   const s = state.score;
-  s.notes = quantize(state.raw, { bpm: s.bpm, beats: s.beats, split: s.split, offset: state.rawOffset });
+  s.notes = quantizeRaw(state.raw, s);
   state.selection = new Set();
   render();
 };
@@ -472,18 +474,40 @@ $('opt-sens').onchange = (e) => {
   buildFromModel({ keepSettings: true });
 };
 
+/** Raw seconds -> beat-grid notes, following tempo changes when beat tracking is on. */
+function quantizeRaw(raw, s, { fromBars } = {}) {
+  state.rawOffset = fitOffset(raw, s.bpm);
+  let map = null, bars = null;
+  if ($('set-track').checked) {
+    bars = trackBars(raw, s.bpm, s.beats);
+    if (bars) map = bars.map;
+    else {
+      const beats = trackBeats(raw, s.bpm);
+      if (beats) map = makeBeatMap(beats, Math.min(...raw.map((n) => n.start)));
+    }
+  }
+  if (bars && fromBars) fromBars(bars);
+  const grid = map ? chooseGrid(raw, map) : undefined;
+  const notes = quantize(raw, { bpm: s.bpm, beats: s.beats, split: s.split, offset: state.rawOffset, map, grid });
+  if (!bars) {
+    const shift = estimateDownbeat(notes, s.beats);
+    if (shift) notes.forEach((n) => { n.start += shift; });
+  }
+  notationDurations(notes, s.beats);
+  return notes;
+}
+
 function buildFromModel({ keepSettings = false } = {}) {
   const raw = extractNotes(state.modelOut, state.sens);
   if (!raw.length) { setStatus('没有识别到音符，试试提高灵敏度或换一段更清晰的音频。', true); return; }
   state.raw = raw;
-  state.rawOffset = raw[0].start;
   const s = state.score;
   const next = keepSettings ? cloneScore(s) : emptyScore();
   if (!keepSettings) {
     next.bpm = estimateBpm(raw);
     next.key = estimateKeyFromRaw(raw);
   }
-  next.notes = quantize(raw, { bpm: next.bpm, beats: next.beats, split: next.split, offset: state.rawOffset });
+  next.notes = quantizeRaw(raw, next, { fromBars: (b) => { if (!keepSettings) next.bpm = Math.max(40, Math.min(200, b.bpm)); } });
   history.push(state.score);
   setScore(next);
   setStatus(`识别到 ${raw.length} 个音符，已估计速度 ♩=${next.bpm}、${KEY_NAMES[next.key]} 大调。若节奏对不上，请调整速度后点「按速度重新量化」，再逐个修正。`);
@@ -691,7 +715,7 @@ function insertEvents(events, title) {
   const base = Math.ceil(end / s.beats - 1e-9) * s.beats;
   history.push(s);
   const added = events.map((e) => clampNote({
-    id: newId(), midi: e.midi, start: base + e.start, dur: e.dur, hand: e.midi >= s.split ? 'R' : 'L', locked: false,
+    id: newId(), midi: e.midi, start: base + e.start, dur: e.dur, hand: e.midi >= s.split ? 'R' : 'L', locked: false, ...(e.sp ? { sp: e.sp } : {}),
   }, s.beats));
   s.notes.push(...added);
   state.selection = new Set(added.map((n) => n.id));

@@ -1,5 +1,5 @@
 // Grand-staff SVG renderer with hit-testing. Uses the Bravura (SMuFL) font for glyphs.
-import { spell, keyAlt, GRID } from './theory.js';
+import { spellOf, keyAlt, GRID } from './theory.js';
 import { measureCount } from './score.js';
 
 const SP = 10;            // staff space in px (glyph font-size = 4 * SP)
@@ -9,7 +9,7 @@ const BASS_BOTTOM_D = 18;   // G2
 const STAFF_GAP = 60;     // treble bottom line -> bass top line
 const SYSTEM_H = 250;
 const TOP_MARGIN = 70;    // room above the treble staff for ledger lines + measure numbers
-const PAD_X = 16;
+const PAD_X = 22;
 const NOTEHEAD_W = 11.8;
 const COLORS = { R: '#2563eb', L: '#d9480f' };
 const REST_SIZES = [16, 8, 4, 2, 1]; // in grid cells
@@ -222,7 +222,7 @@ export class StaffView {
 
     // stem direction
     for (const ev of events) {
-      const ds = ev.notes.map((n) => spell(n.midi, fifths).d);
+      const ds = ev.notes.map((n) => spellOf(n, fifths).d);
       const avg = (Math.min(...ds) + Math.max(...ds)) / 2;
       const mid = baseD + 4;
       ev.dir = avg < mid ? 'up' : 'down';
@@ -233,6 +233,8 @@ export class StaffView {
     // beam groups: consecutive single-voice events shorter than a quarter within the same beat
     const beamed = new Set();
     const beamGroups = [];
+    // eighths in 4/4 beam in half-bar groups (1-2, 3-4); anything with sixteenths beams per beat
+    const beamKey = (e) => (e.dur >= 0.5 && beats === 4 ? Math.floor((e.start + 1e-9) / 2) + 0.5 : Math.floor(e.start + 1e-9));
     {
       let cur = [];
       const flush = () => { if (cur.length >= 2) beamGroups.push(cur); cur = []; };
@@ -240,7 +242,7 @@ export class StaffView {
       for (const ev of sorted) {
         if (ev.dur >= 1) { flush(); continue; }
         const last = cur[cur.length - 1];
-        if (last && (Math.abs(last.start + last.dur - ev.start) > 1e-6 || Math.floor(last.start + 1e-9) !== Math.floor(ev.start + 1e-9))) flush();
+        if (last && (Math.abs(last.start + last.dur - ev.start) > 1e-6 || beamKey(last) !== beamKey(ev))) flush();
         cur.push(ev);
       }
       flush();
@@ -256,7 +258,7 @@ export class StaffView {
     const accOut = [];
     for (const ev of events) {
       const x = xOf(ev.start);
-      const sorted = ev.notes.map((n) => ({ n, s: spell(n.midi, fifths) })).sort((a, b) => a.s.d - b.s.d);
+      const sorted = ev.notes.map((n) => ({ n, s: spellOf(n, fifths) })).sort((a, b) => a.s.d - b.s.d);
       // seconds: shift to other side of stem
       let prevD = -99, prevShifted = false;
       for (const it of sorted) {
@@ -270,7 +272,7 @@ export class StaffView {
       for (const it of [...sorted].reverse()) {
         const cur = accState.has(it.s.d) ? accState.get(it.s.d) : keyAlt(it.s.L, fifths);
         if (it.s.alt !== cur) {
-          it.acc = it.s.alt === 1 ? G.sharp : it.s.alt === -1 ? G.flat : G.natural;
+          it.acc = { 1: G.sharp, '-1': G.flat, 2: G.dsharp, '-2': G.dflat }[it.s.alt] || G.natural;
           accState.set(it.s.d, it.s.alt);
           let col = 0;
           while (placed.some((p) => p.col === col && Math.abs(p.d - it.s.d) < 6)) col++;
