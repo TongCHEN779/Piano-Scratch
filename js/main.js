@@ -429,6 +429,30 @@ function pickFile(file) {
   origAudio.src = URL.createObjectURL(file);
 }
 
+async function loadUrl() {
+  const url = $('audio-url').value.trim();
+  if (!url) return;
+  const btn = $('btn-url');
+  btn.disabled = true;
+  setStatus('正在获取链接…');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (blob.type && !/^(audio|video|application\/octet-stream)/.test(blob.type)) throw new Error(`不是音频文件（${blob.type}）`);
+    const name = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'audio');
+    pickFile(new File([blob], name, { type: blob.type }));
+    setStatus('链接已载入，点「开始转谱」。');
+  } catch (err) {
+    console.error(err);
+    setStatus('无法直接获取该链接（可能被跨域限制，或不是音频直链）。请先下载音频，再用上面的方式上传。', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('btn-url').onclick = loadUrl;
+$('audio-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadUrl(); });
+
 $('btn-pick').onclick = () => $('file-audio').click();
 $('file-audio').onchange = (e) => pickFile(e.target.files[0]);
 const drop = $('drop');

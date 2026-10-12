@@ -27,6 +27,10 @@
       <div><strong>拖入音频文件</strong>，或 <button id="btn-pick" class="link">选择文件</button></div>
       <div class="muted" id="file-name">mp3 / wav / m4a / ogg …　纯钢琴、单件乐器效果最好</div>
     </div>
+    <div class="url-row">
+      <input id="audio-url" type="url" placeholder="或粘贴音频直链（.mp3 / .wav …），需对方服务器允许跨域">
+      <button id="btn-url">载入链接</button>
+    </div>
     <div class="import-opts">
       <label>起点 (秒) <input id="opt-start" type="number" min="0" value="0" step="1"></label>
       <label>最长转写 (秒) <input id="opt-len" type="number" min="5" max="180" value="60" step="5"></label>
