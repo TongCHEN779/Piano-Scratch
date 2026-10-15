@@ -1,0 +1,2 @@
+# evaluation / measure-check scripts (CPU only). LEGATO and homr have their own environments, see README.
+music21>=9
